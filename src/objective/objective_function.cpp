@@ -5,6 +5,7 @@
 #include <LightGBM/objective_function.h>
 
 #include "binary_objective.hpp"
+#include "custom_objective.hpp"
 #include "multiclass_objective.hpp"
 #include "rank_objective.hpp"
 #include "regression_objective.hpp"
@@ -87,6 +88,8 @@ ObjectiveFunction* ObjectiveFunction::CreateObjectiveFunction(const std::string&
       return new MulticlassSoftmax(config);
     } else if (type == std::string("multiclassova")) {
       return new MulticlassOVA(config);
+    } else if (type == std::string("focalloss")) {
+      return new FocalLossSoftmax(config);
     } else if (type == std::string("cross_entropy")) {
       return new CrossEntropy(config);
     } else if (type == std::string("cross_entropy_lambda")) {
@@ -132,6 +135,8 @@ ObjectiveFunction* ObjectiveFunction::CreateObjectiveFunction(const std::string&
     return new MulticlassSoftmax(strs);
   } else if (type == std::string("multiclassova")) {
     return new MulticlassOVA(strs);
+  } else if (type == std::string("focalloss")) {
+    return new FocalLossSoftmax(strs);
   } else if (type == std::string("cross_entropy")) {
     return new CrossEntropy(strs);
   } else if (type == std::string("cross_entropy_lambda")) {
