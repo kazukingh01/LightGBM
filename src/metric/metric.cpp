@@ -116,6 +116,8 @@ Metric* Metric::CreateMetric(const std::string& type, const Config& config) {
       return new MultiSoftmaxLoglossMetric(config);
     } else if (type == std::string("focalloss")) {
       return new FocalLossMetric(config);
+    } else if (type == std::string("multirank")) {
+      return new XendcgSoftmaxMetric(config);
     } else if (type == std::string("multi_error")) {
       return new MultiErrorMetric(config);
     } else if (type == std::string("cross_entropy")) {
