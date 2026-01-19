@@ -90,6 +90,8 @@ ObjectiveFunction* ObjectiveFunction::CreateObjectiveFunction(const std::string&
       return new MulticlassOVA(config);
     } else if (type == std::string("focalloss")) {
       return new FocalLossSoftmax(config);
+    } else if (type == std::string("multirank")) {
+      return new XendcgSoftmax(config);
     } else if (type == std::string("cross_entropy")) {
       return new CrossEntropy(config);
     } else if (type == std::string("cross_entropy_lambda")) {
@@ -137,6 +139,8 @@ ObjectiveFunction* ObjectiveFunction::CreateObjectiveFunction(const std::string&
     return new MulticlassOVA(strs);
   } else if (type == std::string("focalloss")) {
     return new FocalLossSoftmax(strs);
+  } else if (type == std::string("multirank")) {
+    return new XendcgSoftmax(strs);
   } else if (type == std::string("cross_entropy")) {
     return new CrossEntropy(strs);
   } else if (type == std::string("cross_entropy_lambda")) {
