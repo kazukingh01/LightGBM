@@ -149,6 +149,22 @@ class XendcgSoftmax: public MulticlassSoftmax {
     return digits;
   }
 
+  static void ToProbabilities(std::vector<double>* p_rec) {
+    std::vector<double> &rec = *p_rec;
+    double wmax = rec[0];
+    for (size_t i = 1; i < rec.size(); ++i) {
+      wmax = std::max(rec[i], wmax);
+    }
+    double wsum = 0.0f;
+    for (size_t i = 0; i < rec.size(); ++i) {
+      rec[i] = std::pow(2, rec[i] - wmax);
+      wsum += rec[i];
+    }
+    for (size_t i = 0; i < rec.size(); ++i) {
+      rec[i] /= static_cast<double>(wsum);
+    }
+  }
+
   void Init(const Metadata& metadata, data_size_t num_data) override {
     num_data_ = num_data;
     label_ = metadata.label();
@@ -158,45 +174,34 @@ class XendcgSoftmax: public MulticlassSoftmax {
     std::vector<int> radices(num_class_, num_class_);
 
     // Resize label_int_2d_ to 2D: num_data_ x num_class_
-    label_int_2d_.resize(num_data_);
+    phi_.resize(num_data_);
     for (int i = 0; i < num_data_; ++i) {
       int encoded_value = static_cast<int>(label_[i]);
-      label_int_2d_[i] = MixedRadixDecode(encoded_value, radices);
+      std::vector<int> label_int_2d_i = MixedRadixDecode(encoded_value, radices);
+      phi_[i].resize(num_class_);
+      for (int k = 0; k < num_class_; ++k) {
+        phi_[i][k] = num_class_ - static_cast<int>(label_int_2d_i[k]);
+      }
+      ToProbabilities(&phi_[i]);
     }
 
-    // Validate decoded labels
-    for (int i = 0; i < num_data_; ++i) {
-      for (int j = 0; j < num_class_; ++j) {
-        if (label_int_2d_[i][j] < 0 || label_int_2d_[i][j] >= num_class_) {
-          Log::Fatal("Decoded label must be in [0, %d), but found %d at position [%d][%d]",
-                     num_class_, label_int_2d_[i][j], i, j);
-        }
-      }
-    }
+    // Debug code
+    // for (int i = 0; i < num_data_; ++i) {
+    //   // Debug print phi_[i]
+    //   std::string label_str = "phi_[" + std::to_string(i) + "] = [";
+    //   for (size_t j = 0; j < phi_[i].size(); ++j) {
+    //     label_str += std::to_string(phi_[i][j]);
+    //     if (j < phi_[i].size() - 1) {
+    //       label_str += ", ";
+    //     }
+    //   }
+    //   label_str += "]";
+    //   Log::Info(label_str.c_str());
+    // }
 
     // Calculate (weighted) mean of each column
     class_init_probs_.resize(num_class_, 0.0);
     double sum_weight = 0.0;
-
-    if (weights_ == nullptr) {
-      // Unweighted mean
-      for (int k = 0; k < num_class_; ++k) {
-        double sum = 0.0;
-        for (int i = 0; i < num_data_; ++i) {
-          sum += static_cast<double>(label_int_2d_[i][k]);
-        }
-        class_init_probs_[k] = sum;
-      }
-      sum_weight = static_cast<double>(num_data_);
-    } else {
-      // Weighted mean
-      for (int i = 0; i < num_data_; ++i) {
-        sum_weight += static_cast<double>(weights_[i]);
-        for (int k = 0; k < num_class_; ++k) {
-          class_init_probs_[k] += static_cast<double>(label_int_2d_[i][k]) * static_cast<double>(weights_[i]);
-        }
-      }
-    }
 
     if (Network::num_machines() > 1) {
       // For distributed learning, compute global weighted mean
@@ -209,13 +214,13 @@ class XendcgSoftmax: public MulticlassSoftmax {
     for (int k = 0; k < num_class_; ++k) {
       class_init_probs_[k] /= sum_weight;
     }
+
   }
 
   void GetGradients(const double* score, score_t* gradients, score_t* hessians) const override {
     if (weights_ == nullptr) {
       std::vector<double> rec;
-      std::vector<double> phi;
-      #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) private(rec, phi)
+      #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) private(rec)
       for (data_size_t i = 0; i < num_data_; ++i) {
         rec.resize(num_class_);
         for (int k = 0; k < num_class_; ++k) {
@@ -223,14 +228,9 @@ class XendcgSoftmax: public MulticlassSoftmax {
           rec[k] = static_cast<double>(score[idx]);
         }
         Common::Softmax(&rec);
-        phi.resize(num_class_);
-        for (int k = 0; k < num_class_; ++k) {
-          phi[k] = std::pow(2, num_class_ - static_cast<int>(label_int_2d_[i][k]));
-        }
-        Common::Softmax(&phi);
         for (int k = 0; k < num_class_; ++k) {
           auto rhok = rec[k];
-          auto phik = phi[k];
+          auto phik = phi_[i][k];
           size_t idx = static_cast<size_t>(num_data_) * k + i;
           gradients[idx] = static_cast<score_t>(-1.0f * phik + rhok);
           hessians[idx] = static_cast<score_t>(factor_ * rhok * (1.0f - rhok));
@@ -238,8 +238,7 @@ class XendcgSoftmax: public MulticlassSoftmax {
       }
     } else {
       std::vector<double> rec;
-      std::vector<double> phi;
-      #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) private(rec, phi)
+      #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) private(rec)
       for (data_size_t i = 0; i < num_data_; ++i) {
         rec.resize(num_class_);
         for (int k = 0; k < num_class_; ++k) {
@@ -247,14 +246,9 @@ class XendcgSoftmax: public MulticlassSoftmax {
           rec[k] = static_cast<double>(score[idx]);
         }
         Common::Softmax(&rec);
-        phi.resize(num_class_);
-        for (int k = 0; k < num_class_; ++k) {
-          phi[k] = std::pow(2, num_class_ - static_cast<int>(label_int_2d_[i][k]));
-        }
-        Common::Softmax(&phi);
         for (int k = 0; k < num_class_; ++k) {
           auto rhok = rec[k];
-          auto phik = phi[k];
+          auto phik = phi_[i][k];
           size_t idx = static_cast<size_t>(num_data_) * k + i;
           gradients[idx] = static_cast<score_t>((-1.0f * phik + rhok) * weights_[i]);
           hessians[idx] = static_cast<score_t>(factor_ * rhok * (1.0f - rhok) * weights_[i]);
@@ -268,8 +262,8 @@ class XendcgSoftmax: public MulticlassSoftmax {
   }
 
  private:
-  /*! \brief Decoded labels: 2D array of shape (num_data_, num_class_) */
-  std::vector<std::vector<int>> label_int_2d_;
+  /*! \brief Pre-computed phi values: 2D array of shape (num_data_, num_class_) */
+  std::vector<std::vector<double>> phi_;
 };
 
 
