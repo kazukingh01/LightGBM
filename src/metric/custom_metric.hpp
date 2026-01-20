@@ -64,6 +64,21 @@ class XendcgSoftmaxMetric: public Metric {
     }
     return digits;
   }
+  static void ToProbabilities(std::vector<double>* p_rec) {
+    std::vector<double> &rec = *p_rec;
+    double wmax = rec[0];
+    for (size_t i = 1; i < rec.size(); ++i) {
+      wmax = std::max(rec[i], wmax);
+    }
+    double wsum = 0.0f;
+    for (size_t i = 0; i < rec.size(); ++i) {
+      rec[i] = std::pow(2, rec[i] - wmax);
+      wsum += rec[i];
+    }
+    for (size_t i = 0; i < rec.size(); ++i) {
+      rec[i] /= static_cast<double>(wsum);
+    }
+  }
 
   void Init(const Metadata& metadata, data_size_t num_data) override {
     name_.emplace_back("multirank");
@@ -80,36 +95,16 @@ class XendcgSoftmaxMetric: public Metric {
       }
     }
 
-    // Decode labels and compute phi (ideal distribution) for each data point
-    label_int_2d_.resize(num_data_);
+    // Resize phi_ to 2D: num_data_ x num_class_
     phi_.resize(num_data_);
-    for (data_size_t i = 0; i < num_data_; ++i) {
+    for (int i = 0; i < num_data_; ++i) {
       int encoded_value = static_cast<int>(label_[i]);
-      label_int_2d_[i] = MixedRadixDecode(encoded_value, num_class_);
-
-      // Validate decoded labels
-      for (int j = 0; j < num_class_; ++j) {
-        if (label_int_2d_[i][j] < 0 || label_int_2d_[i][j] >= num_class_) {
-          Log::Fatal("Decoded label must be in [0, %d), but found %d at position [%d][%d]",
-                     num_class_, label_int_2d_[i][j], i, j);
-        }
-      }
-
-      // Compute phi (ideal distribution based on relevance)
+      std::vector<int> label_int_2d_i = MixedRadixDecode(encoded_value, num_class_);
       phi_[i].resize(num_class_);
       for (int k = 0; k < num_class_; ++k) {
-        phi_[i][k] = std::pow(2.0, num_class_ - label_int_2d_[i][k]);
+        phi_[i][k] = num_class_ - static_cast<int>(label_int_2d_i[k]);
       }
-      // Softmax on phi
-      double max_phi = *std::max_element(phi_[i].begin(), phi_[i].end());
-      double sum_exp = 0.0;
-      for (int k = 0; k < num_class_; ++k) {
-        phi_[i][k] = std::exp(phi_[i][k] - max_phi);
-        sum_exp += phi_[i][k];
-      }
-      for (int k = 0; k < num_class_; ++k) {
-        phi_[i][k] /= sum_exp;
-      }
+      ToProbabilities(&phi_[i]);
     }
   }
 
@@ -121,7 +116,6 @@ class XendcgSoftmaxMetric: public Metric {
       num_tree_per_iteration = objective->NumModelPerIteration();
       num_pred_per_row = objective->NumPredictOneRow();
     }
-
     if (objective != nullptr) {
       if (weights_ == nullptr) {
         #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) reduction(+:sum_loss)
@@ -131,15 +125,10 @@ class XendcgSoftmaxMetric: public Metric {
             size_t idx = static_cast<size_t>(num_data_) * k + i;
             raw_score[k] = static_cast<double>(score[idx]);
           }
-          std::vector<double> rho(num_pred_per_row);
-          objective->ConvertOutput(raw_score.data(), rho.data());
-          // Compute cross-entropy loss: -sum_k(phi_k * log(rho_k))
-          double loss = 0.0;
-          for (int k = 0; k < num_class_; ++k) {
-            double rho_k = std::max(rho[k], kEpsilon);
-            loss -= phi_[i][k] * std::log(rho_k);
-          }
-          sum_loss += loss;
+          std::vector<double> rec(num_pred_per_row);
+          objective->ConvertOutput(raw_score.data(), rec.data());
+          // add loss
+          sum_loss += LossOnPoint(phi_[i], &rec);
         }
       } else {
         #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) reduction(+:sum_loss)
@@ -149,49 +138,34 @@ class XendcgSoftmaxMetric: public Metric {
             size_t idx = static_cast<size_t>(num_data_) * k + i;
             raw_score[k] = static_cast<double>(score[idx]);
           }
-          std::vector<double> rho(num_pred_per_row);
-          objective->ConvertOutput(raw_score.data(), rho.data());
-          // Compute cross-entropy loss: -sum_k(phi_k * log(rho_k))
-          double loss = 0.0;
-          for (int k = 0; k < num_class_; ++k) {
-            double rho_k = std::max(rho[k], kEpsilon);
-            loss -= phi_[i][k] * std::log(rho_k);
-          }
-          sum_loss += loss * weights_[i];
+          std::vector<double> rec(num_pred_per_row);
+          objective->ConvertOutput(raw_score.data(), rec.data());
+          // add loss
+          sum_loss += LossOnPoint(phi_[i], &rec) * weights_[i];
         }
       }
     } else {
       if (weights_ == nullptr) {
         #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) reduction(+:sum_loss)
         for (data_size_t i = 0; i < num_data_; ++i) {
-          std::vector<double> rho(num_tree_per_iteration);
+          std::vector<double> rec(num_tree_per_iteration);
           for (int k = 0; k < num_tree_per_iteration; ++k) {
             size_t idx = static_cast<size_t>(num_data_) * k + i;
-            rho[k] = static_cast<double>(score[idx]);
+            rec[k] = static_cast<double>(score[idx]);
           }
-          // Compute cross-entropy loss: -sum_k(phi_k * log(rho_k))
-          double loss = 0.0;
-          for (int k = 0; k < num_class_; ++k) {
-            double rho_k = std::max(rho[k], kEpsilon);
-            loss -= phi_[i][k] * std::log(rho_k);
-          }
-          sum_loss += loss;
+          // add loss
+          sum_loss += LossOnPoint(phi_[i], &rec);
         }
       } else {
         #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) reduction(+:sum_loss)
         for (data_size_t i = 0; i < num_data_; ++i) {
-          std::vector<double> rho(num_tree_per_iteration);
+          std::vector<double> rec(num_tree_per_iteration);
           for (int k = 0; k < num_tree_per_iteration; ++k) {
             size_t idx = static_cast<size_t>(num_data_) * k + i;
-            rho[k] = static_cast<double>(score[idx]);
+            rec[k] = static_cast<double>(score[idx]);
           }
-          // Compute cross-entropy loss: -sum_k(phi_k * log(rho_k))
-          double loss = 0.0;
-          for (int k = 0; k < num_class_; ++k) {
-            double rho_k = std::max(rho[k], kEpsilon);
-            loss -= phi_[i][k] * std::log(rho_k);
-          }
-          sum_loss += loss * weights_[i];
+          // add loss
+          sum_loss += LossOnPoint(phi_[i], &rec) * weights_[i];
         }
       }
     }
@@ -199,7 +173,19 @@ class XendcgSoftmaxMetric: public Metric {
     return std::vector<double>(1, loss);
   }
 
- private:
+  inline static double LossOnPoint(const std::vector<double>& phi, std::vector<double>* score) {
+    // Compute cross-entropy loss: -sum_k(phi_k * log(rho_k))
+    double loss = 0.0;
+    auto& rho = *score;
+    for (size_t k = 0; k < phi.size(); ++k) {
+      double rho_k = std::max<double>(rho[k], kEpsilon);
+      loss -= phi[k] * std::log(rho_k);
+    }
+    return loss;
+  }
+
+
+  private:
   /*! \brief Number of data */
   data_size_t num_data_;
   /*! \brief Pointer of label */
@@ -214,8 +200,6 @@ class XendcgSoftmaxMetric: public Metric {
   int num_class_;
   /*! \brief Config parameters */
   Config config_;
-  /*! \brief Decoded labels: 2D array of shape (num_data_, num_class_) */
-  std::vector<std::vector<int>> label_int_2d_;
   /*! \brief Pre-computed phi (ideal distribution) for each data point */
   std::vector<std::vector<double>> phi_;
 };
