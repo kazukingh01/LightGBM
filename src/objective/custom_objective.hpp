@@ -158,7 +158,7 @@ class MulticlassSoftmaxSmooth: public MulticlassSoftmax {
           if (label_int_[i] == k) {
             gradients[idx] = static_cast<score_t>(p - (1.0f - smooth_ + smooth_factor));
           } else {
-            gradients[idx] = static_cast<score_t>(p + smooth_factor);
+            gradients[idx] = static_cast<score_t>(p - smooth_factor);
           }
           hessians[idx] = static_cast<score_t>(factor_ * p * (1.0f - p));
         }
@@ -179,7 +179,7 @@ class MulticlassSoftmaxSmooth: public MulticlassSoftmax {
           if (label_int_[i] == k) {
             gradients[idx] = static_cast<score_t>((p - (1.0f - smooth_ + smooth_factor)) * weights_[i]);
           } else {
-            gradients[idx] = static_cast<score_t>((p + smooth_factor) * weights_[i]);
+            gradients[idx] = static_cast<score_t>((p - smooth_factor) * weights_[i]);
           }
           hessians[idx] = static_cast<score_t>((factor_ * p * (1.0f - p))* weights_[i]);
         }
