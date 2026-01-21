@@ -981,6 +981,13 @@ struct Config {
   // desc = when ``focal_gamma=0``, focal loss is equivalent to cross-entropy loss
   double focal_gamma = 1.0;
 
+  // check = >=0.0
+  // check = <=1.0
+  // desc = used only in ``multiclasssmooth`` multiclass classification application
+  // desc = label smoothing parameter for softmax cross-entropy loss
+  // desc = when ``multiclass_smooth=0``, equivalent to standard multiclass softmax
+  double multiclass_smooth = 0.0;
+
   // check = >0
   // desc = used only in ``lambdarank`` application
   // desc = controls the number of top-results to focus on during training, refer to "truncation level" in the Sec. 3 of `LambdaMART paper <https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/MSR-TR-2010-82.pdf>`__

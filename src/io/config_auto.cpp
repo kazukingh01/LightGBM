@@ -304,6 +304,7 @@ const std::unordered_set<std::string>& Config::parameter_set() {
   "poisson_max_delta_step",
   "tweedie_variance_power",
   "focal_gamma",
+  "multiclass_smooth",
   "lambdarank_truncation_level",
   "lambdarank_norm",
   "label_gain",
@@ -622,6 +623,10 @@ void Config::GetMembersFromString(const std::unordered_map<std::string, std::str
   GetDouble(params, "focal_gamma", &focal_gamma);
   CHECK_GE(focal_gamma, 0.0);
 
+  GetDouble(params, "multiclass_smooth", &multiclass_smooth);
+  CHECK_GE(multiclass_smooth, 0.0);
+  CHECK_LE(multiclass_smooth, 1.0);
+
   GetInt(params, "lambdarank_truncation_level", &lambdarank_truncation_level);
   CHECK_GT(lambdarank_truncation_level, 0);
 
@@ -775,6 +780,7 @@ std::string Config::SaveMembersToString() const {
   str_buf << "[poisson_max_delta_step: " << poisson_max_delta_step << "]\n";
   str_buf << "[tweedie_variance_power: " << tweedie_variance_power << "]\n";
   str_buf << "[focal_gamma: " << focal_gamma << "]\n";
+  str_buf << "[multiclass_smooth: " << multiclass_smooth << "]\n";
   str_buf << "[lambdarank_truncation_level: " << lambdarank_truncation_level << "]\n";
   str_buf << "[lambdarank_norm: " << lambdarank_norm << "]\n";
   str_buf << "[label_gain: " << Common::Join(label_gain, ",") << "]\n";
@@ -918,6 +924,7 @@ const std::unordered_map<std::string, std::vector<std::string>>& Config::paramet
     {"poisson_max_delta_step", {}},
     {"tweedie_variance_power", {}},
     {"focal_gamma", {}},
+    {"multiclass_smooth", {}},
     {"lambdarank_truncation_level", {}},
     {"lambdarank_norm", {}},
     {"label_gain", {}},
@@ -1064,6 +1071,7 @@ const std::unordered_map<std::string, std::string>& Config::ParameterTypes() {
     {"poisson_max_delta_step", "double"},
     {"tweedie_variance_power", "double"},
     {"focal_gamma", "double"},
+    {"multiclass_smooth", "double"},
     {"lambdarank_truncation_level", "int"},
     {"lambdarank_norm", "bool"},
     {"label_gain", "vector<double>"},
