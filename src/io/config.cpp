@@ -314,7 +314,7 @@ void Config::Set(const std::unordered_map<std::string, std::string>& params) {
 }
 
 bool CheckMultiClassObjective(const std::string& objective) {
-  return (objective == std::string("multiclass") || objective == std::string("multiclassova") || objective == std::string("focalloss") || objective == std::string("multirank"));
+  return (objective == std::string("multiclass") || objective == std::string("multiclassova") || objective == std::string("focalloss") || objective == std::string("multiclasssmooth") || objective == std::string("multirank"));
 }
 
 void Config::CheckParamConflict(const std::unordered_map<std::string, std::string>& params) {

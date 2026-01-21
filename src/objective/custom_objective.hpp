@@ -122,6 +122,88 @@ class FocalLossSoftmax: public MulticlassSoftmax {
 };
 
 
+class MulticlassSoftmaxSmooth: public MulticlassSoftmax {
+  public:
+   explicit MulticlassSoftmaxSmooth(const Config& config) : MulticlassSoftmax(config) {
+     smooth_ = config.multiclass_smooth;
+   }
+ 
+   explicit MulticlassSoftmaxSmooth(const std::vector<std::string>& strs) : MulticlassSoftmax(strs) {
+     smooth_ = 0.0;  // default value for model loading
+     for (auto str : strs) {
+       auto tokens = Common::Split(str.c_str(), ':');
+       if (tokens.size() == 2) {
+         if (tokens[0] == std::string("multiclass_smooth")) {
+           Common::Atof(tokens[1].c_str(), &smooth_);
+         }
+       }
+     }
+   }
+
+   void GetGradients(const double* score, score_t* gradients, score_t* hessians) const override {
+    double smooth_factor = smooth_ / num_class_;
+    if (weights_ == nullptr) {
+      std::vector<double> rec;
+      #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) private(rec)
+      for (data_size_t i = 0; i < num_data_; ++i) {
+        rec.resize(num_class_);
+        for (int k = 0; k < num_class_; ++k) {
+          size_t idx = static_cast<size_t>(num_data_) * k + i;
+          rec[k] = static_cast<double>(score[idx]);
+        }
+        Common::Softmax(&rec);
+        for (int k = 0; k < num_class_; ++k) {
+          auto p = rec[k];
+          size_t idx = static_cast<size_t>(num_data_) * k + i;
+          if (label_int_[i] == k) {
+            gradients[idx] = static_cast<score_t>(p - (1.0f - smooth_ + smooth_factor));
+          } else {
+            gradients[idx] = static_cast<score_t>(p + smooth_factor);
+          }
+          hessians[idx] = static_cast<score_t>(factor_ * p * (1.0f - p));
+        }
+      }
+    } else {
+      std::vector<double> rec;
+      #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) private(rec)
+      for (data_size_t i = 0; i < num_data_; ++i) {
+        rec.resize(num_class_);
+        for (int k = 0; k < num_class_; ++k) {
+          size_t idx = static_cast<size_t>(num_data_) * k + i;
+          rec[k] = static_cast<double>(score[idx]);
+        }
+        Common::Softmax(&rec);
+        for (int k = 0; k < num_class_; ++k) {
+          auto p = rec[k];
+          size_t idx = static_cast<size_t>(num_data_) * k + i;
+          if (label_int_[i] == k) {
+            gradients[idx] = static_cast<score_t>((p - (1.0f - smooth_ + smooth_factor)) * weights_[i]);
+          } else {
+            gradients[idx] = static_cast<score_t>((p + smooth_factor) * weights_[i]);
+          }
+          hessians[idx] = static_cast<score_t>((factor_ * p * (1.0f - p))* weights_[i]);
+        }
+      }
+    }
+   }
+   
+   const char* GetName() const override {
+     return "multiclasssmooth";
+   }
+ 
+   std::string ToString() const override {
+     std::stringstream str_buf;
+     str_buf << GetName() << " ";
+     str_buf << "num_class:" << num_class_ << " ";
+     str_buf << "multiclass_smooth:" << smooth_;
+     return str_buf.str();
+   }
+ 
+  private:
+   double smooth_;
+ }; 
+
+
 /*!
 * \brief Objective function for multiclass classification with XE-NDCG style gradients
 */
