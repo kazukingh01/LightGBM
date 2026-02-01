@@ -308,7 +308,7 @@ void Config::Set(const std::unordered_map<std::string, std::string>& params) {
 }
 
 bool CheckMultiClassObjective(const std::string& objective) {
-  return (objective == std::string("multiclass") || objective == std::string("multiclassova") || objective == std::string("focalloss") || objective == std::string("multiclasssmooth") || objective == std::string("multirank"));
+  return (objective == std::string("multiclass") || objective == std::string("multiclassova") || objective == std::string("focalloss") || objective == std::string("multiclasssmooth") || objective == std::string("multirank") || objective == std::string("soft_multiclass"));
 }
 
 void Config::CheckParamConflict(const std::unordered_map<std::string, std::string>& params) {
@@ -332,6 +332,7 @@ void Config::CheckParamConflict(const std::unordered_map<std::string, std::strin
                                    || metric_type == std::string("auc_mu")
                                    || metric_type == std::string("focalloss")
                                    || metric_type == std::string("multirank")
+                                   || metric_type == std::string("soft_multiclass")
                                    || (metric_type == std::string("custom") && num_class_check > 1));
     if ((objective_type_multiclass && !metric_type_multiclass)
         || (!objective_type_multiclass && metric_type_multiclass)) {
