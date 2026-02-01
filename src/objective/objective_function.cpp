@@ -94,6 +94,8 @@ ObjectiveFunction* ObjectiveFunction::CreateObjectiveFunction(const std::string&
       return new MulticlassSoftmaxSmooth(config);
     } else if (type == std::string("multirank")) {
       return new XendcgSoftmax(config);
+    } else if (type == std::string("soft_multiclass")) {
+      return new SoftCrossEntropy(config);
     } else if (type == std::string("cross_entropy")) {
       return new CrossEntropy(config);
     } else if (type == std::string("cross_entropy_lambda")) {
@@ -145,6 +147,8 @@ ObjectiveFunction* ObjectiveFunction::CreateObjectiveFunction(const std::string&
     return new MulticlassSoftmaxSmooth(strs);
   } else if (type == std::string("multirank")) {
     return new XendcgSoftmax(strs);
+  } else if (type == std::string("soft_multiclass")) {
+    return new SoftCrossEntropy(strs);
   } else if (type == std::string("cross_entropy")) {
     return new CrossEntropy(strs);
   } else if (type == std::string("cross_entropy_lambda")) {

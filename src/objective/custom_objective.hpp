@@ -349,6 +349,94 @@ class XendcgSoftmax: public MulticlassSoftmax {
 };
 
 
+class SoftCrossEntropy: public MulticlassSoftmax {
+  public:
+   explicit SoftCrossEntropy(const Config& config) : MulticlassSoftmax(config) {
+   }
+ 
+   explicit SoftCrossEntropy(const std::vector<std::string>& strs) : MulticlassSoftmax(strs) {
+   }
+ 
+   void Init(const Metadata& metadata, data_size_t num_data) override {
+    num_data_ = num_data;
+    label_ = metadata.label();
+    label_probs_ = metadata.init_score();
+    weights_ = metadata.weights();
+    class_init_probs_.resize(num_class_, 0.0);
+    double sum_weight = 0.0;
+    for (int i = 0; i < num_data_; ++i) {
+      for (int k = 0; k < num_class_; ++k) {
+        size_t idx = static_cast<size_t>(num_data_) * k + i;
+        class_init_probs_[k] += label_probs_[idx];
+      }
+      if (weights_ != nullptr) {
+        sum_weight += weights_[i];
+      }
+    }
+    if (weights_ == nullptr) {
+      sum_weight = num_data_;
+    }
+    if (Network::num_machines() > 1) {
+      sum_weight = Network::GlobalSyncUpBySum(sum_weight);
+      for (int i = 0; i < num_class_; ++i) {
+        class_init_probs_[i] = Network::GlobalSyncUpBySum(class_init_probs_[i]);
+      }
+    }
+    for (int i = 0; i < num_class_; ++i) {
+      class_init_probs_[i] /= sum_weight;
+    }
+   }
+ 
+   void GetGradients(const double* score, score_t* gradients, score_t* hessians) const override {
+    if (weights_ == nullptr) {
+      std::vector<double> rec;
+      #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) private(rec)
+      for (data_size_t i = 0; i < num_data_; ++i) {
+        rec.resize(num_class_);
+        for (int k = 0; k < num_class_; ++k) {
+          size_t idx = static_cast<size_t>(num_data_) * k + i;
+          rec[k] = static_cast<double>(score[idx]);
+        }
+        Common::Softmax(&rec);
+        for (int k = 0; k < num_class_; ++k) {
+          auto p = rec[k];
+          size_t idx = static_cast<size_t>(num_data_) * k + i;
+          auto y = label_probs_[idx];
+          gradients[idx] = p - y;
+          hessians[idx] = static_cast<score_t>(factor_ * p * (1.0f - p));
+        }
+      }
+    } else {
+      std::vector<double> rec;
+      #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) private(rec)
+      for (data_size_t i = 0; i < num_data_; ++i) {
+        rec.resize(num_class_);
+        for (int k = 0; k < num_class_; ++k) {
+          size_t idx = static_cast<size_t>(num_data_) * k + i;
+          rec[k] = static_cast<double>(score[idx]);
+        }
+        Common::Softmax(&rec);
+        for (int k = 0; k < num_class_; ++k) {
+          auto p = rec[k];
+          size_t idx = static_cast<size_t>(num_data_) * k + i;
+          auto y = label_probs_[idx];
+          gradients[idx] = static_cast<score_t>((p - y) * weights_[i]);
+          hessians[idx] = static_cast<score_t>((factor_ * p * (1.0f - p))* weights_[i]);
+        }
+      }
+    }
+   }
+ 
+   const char* GetName() const override {
+     return "soft_multiclass";
+   }
+ 
+  private:
+   /*! \brief Pointer to label probabilities from init_score */
+   const double* label_probs_;
+};
+ 
+
 }  // namespace LightGBM
 #endif  // LIGHTGBM_SRC_OBJECTIVE_CUSTOM_OBJECTIVE_HPP_
 

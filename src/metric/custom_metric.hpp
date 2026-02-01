@@ -204,6 +204,142 @@ class XendcgSoftmaxMetric: public Metric {
   std::vector<std::vector<double>> phi_;
 };
 
+/*! \brief Soft Cross-Entropy metric for multiclass task with probability labels */
+class SoftCrossEntropyMetric: public Metric {
+ public:
+  explicit SoftCrossEntropyMetric(const Config& config) : config_(config) {
+    num_class_ = config.num_class;
+  }
+
+  virtual ~SoftCrossEntropyMetric() {}
+
+  const std::vector<std::string>& GetName() const override {
+    return name_;
+  }
+
+  double factor_to_bigger_better() const override {
+    return -1.0f;
+  }
+
+  void Init(const Metadata& metadata, data_size_t num_data) override {
+    name_.emplace_back("soft_multiclass");
+    num_data_ = num_data;
+    // get label probabilities from init_score
+    label_probs_ = metadata.init_score();
+    // get weights
+    weights_ = metadata.weights();
+    if (weights_ == nullptr) {
+      sum_weights_ = static_cast<double>(num_data_);
+    } else {
+      sum_weights_ = 0.0;
+      for (data_size_t i = 0; i < num_data_; ++i) {
+        sum_weights_ += weights_[i];
+      }
+    }
+  }
+
+  std::vector<double> Eval(const double* score, const ObjectiveFunction* objective) const override {
+    double sum_loss = 0.0;
+    int num_tree_per_iteration = num_class_;
+    int num_pred_per_row = num_class_;
+    if (objective != nullptr) {
+      num_tree_per_iteration = objective->NumModelPerIteration();
+      num_pred_per_row = objective->NumPredictOneRow();
+    }
+    if (objective != nullptr) {
+      if (weights_ == nullptr) {
+        #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) reduction(+:sum_loss)
+        for (data_size_t i = 0; i < num_data_; ++i) {
+          std::vector<double> raw_score(num_tree_per_iteration);
+          std::vector<double> label_probs(num_tree_per_iteration);
+          for (int k = 0; k < num_tree_per_iteration; ++k) {
+            size_t idx = static_cast<size_t>(num_data_) * k + i;
+            raw_score[k] = static_cast<double>(score[idx]);
+            label_probs[k] = label_probs_[idx];
+          }
+          std::vector<double> rec(num_pred_per_row);
+          objective->ConvertOutput(raw_score.data(), rec.data());
+          // add loss
+          sum_loss += LossOnPoint(&label_probs, &rec);
+        }
+      } else {
+        #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) reduction(+:sum_loss)
+        for (data_size_t i = 0; i < num_data_; ++i) {
+          std::vector<double> raw_score(num_tree_per_iteration);
+          std::vector<double> label_probs(num_tree_per_iteration);
+          for (int k = 0; k < num_tree_per_iteration; ++k) {
+            size_t idx = static_cast<size_t>(num_data_) * k + i;
+            raw_score[k] = static_cast<double>(score[idx]);
+            label_probs[k] = label_probs_[idx];
+          }
+          std::vector<double> rec(num_pred_per_row);
+          objective->ConvertOutput(raw_score.data(), rec.data());
+          // add loss
+          sum_loss += LossOnPoint(&label_probs, &rec) * weights_[i];
+        }
+      }
+    } else {
+      if (weights_ == nullptr) {
+        #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) reduction(+:sum_loss)
+        for (data_size_t i = 0; i < num_data_; ++i) {
+          std::vector<double> rec(num_tree_per_iteration);
+          std::vector<double> label_probs(num_tree_per_iteration);
+          for (int k = 0; k < num_tree_per_iteration; ++k) {
+            size_t idx = static_cast<size_t>(num_data_) * k + i;
+            rec[k] = static_cast<double>(score[idx]);
+            label_probs[k] = label_probs_[idx];
+          }
+          // add loss
+          sum_loss += LossOnPoint(&label_probs, &rec);
+        }
+      } else {
+        #pragma omp parallel for num_threads(OMP_NUM_THREADS()) schedule(static) reduction(+:sum_loss)
+        for (data_size_t i = 0; i < num_data_; ++i) {
+          std::vector<double> rec(num_tree_per_iteration);
+          std::vector<double> label_probs(num_tree_per_iteration);
+          for (int k = 0; k < num_tree_per_iteration; ++k) {
+            size_t idx = static_cast<size_t>(num_data_) * k + i;
+            rec[k] = static_cast<double>(score[idx]);
+            label_probs[k] = label_probs_[idx];
+          }
+          // add loss
+          sum_loss += LossOnPoint(&label_probs, &rec) * weights_[i];
+        }
+      }
+    }
+    double loss = sum_loss / sum_weights_;
+    return std::vector<double>(1, loss);
+  }
+
+  inline static double LossOnPoint(const std::vector<double>* label_probs, const std::vector<double>* score) {
+    // Compute cross-entropy loss: -sum_k(y_k * log(p_k))
+    double loss = 0.0;
+    const auto& y = *label_probs;
+    const auto& p = *score;
+    for (size_t k = 0; k < y.size(); ++k) {
+      double p_k = std::max<double>(p[k], kEpsilon);
+      loss -= y[k] * std::log(p_k);
+    }
+    return loss;
+  }
+
+ private:
+  /*! \brief Number of data */
+  data_size_t num_data_;
+  /*! \brief Pointer to label probabilities from init_score */
+  const double* label_probs_;
+  /*! \brief Pointer of weights */
+  const label_t* weights_;
+  /*! \brief Sum weights */
+  double sum_weights_;
+  /*! \brief Name of this metric */
+  std::vector<std::string> name_;
+  /*! \brief Number of classes */
+  int num_class_;
+  /*! \brief Config parameters */
+  Config config_;
+};
+
 }  // namespace LightGBM
 #endif  // LIGHTGBM_SRC_METRIC_CUSTOM_METRIC_HPP_
 
